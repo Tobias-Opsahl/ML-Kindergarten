@@ -184,7 +184,7 @@ def find_accuracy(predictions, labels):
 
     accuracy = 0
     for i in range(predictions.shape[0]):
-        if predictions[i] == labels[i]:  # Count the correctly predicted classes
+        if np.array_equal(predictions[i], labels[i]):  # Count the correctly predicted classes
             accuracy += 1
 
     accuracy = accuracy / predictions.shape[0]  # Divide by number of observations
@@ -206,6 +206,22 @@ def find_mse(predictions, labels):
 
     mse = mse / predictions.shape[0]  # Divide by number of observations
     return mse
+
+
+def plot_2d_blobs(x_blobs, y_blobs=None, title=None):
+    """
+    Plots 2d blobs.
+
+    Arguments:
+        x_blobs (np.array): (n x 2) dimensional input array
+        y_blobs (np.array): (n) dimensional target array
+        title (str): If not None, creates title of plot
+    """
+    if y_blobs is None:  # If no labels are provided, make all labels 0.
+        y_blobs = np.zeros(len(x_blobs))
+    plt.scatter(x_blobs[:, 0], x_blobs[:, 1], c=y_blobs)
+    if title is not None:
+        plt.title(title)
 
 
 if __name__ == "__main__":
