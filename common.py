@@ -194,6 +194,7 @@ def find_accuracy(predictions, labels):
 def find_mse(predictions, labels):
     """
     Calculates Mean Squared Error (MSE).
+    TODO: Fully vectorize this
     """
     if predictions.shape != labels.shape:  # Check for compatible arrays
         message = f"The prediction's dimensions must be equal to the true labels dimensions."
@@ -225,4 +226,8 @@ def plot_2d_blobs(x_blobs, y_blobs=None, title=None):
 
 
 if __name__ == "__main__":
+    # TODO: Vectorize the scalers
+    # TODO: Make scaler classes so we do not have to return the params unelegantly
+    # TODO: Move one-hot-encoder into here
+    # TODO: Make a one-hot-encoder of numpy data, that also checks for already one-hot-econding,
     pass
