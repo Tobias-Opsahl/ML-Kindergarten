@@ -5,7 +5,8 @@ KNNClassifier and KNNRegressor.
 """
 
 import numpy as np
-from common import Distance, Scaling
+from common import Distance, check_arrays
+from scaling import MinMaxScaler, StandardScaler, NoScaler
 
 
 class KNN:
@@ -13,13 +14,13 @@ class KNN:
     Superclass for KNNClassifier and KNNRegressor.
     This method contains common methods that is used for both of them
     """
-    def __init__(self, k=3, dist_func="L2", scaling="min_max"):
+    def __init__(self, k=3, dist_func="L2", scaling="standard"):
         """
         Arguments:
             k (int): The amount of nearest neighbours we look at.
             dist_func (str / callable): The function we use for calculating distances.
                 Can be "L1" or "L2" for the L1 and L2 distances. Can also be callable.
-                Then it should be a distance function that takes two arrays as input
+                In that case, it should be a distance function that takes two arrays (and matrices) as input.
             scaling (str): The scaler to use. Must be in ["min_max", "normal", "no_scaling"].
         """
         # Set k
@@ -42,13 +43,13 @@ class KNN:
 
         # Set scaler
         if scaling == "min_max":
-            self._scaler = Scaling.min_max_scaler
+            self._scaler = MinMaxScaler()
         elif scaling == "normal" or scaling == "standard":
-            self._scaler = Scaling.normal_scaler
+            self._scaler = StandardScaler()
         elif scaling is False or scaling is None or scaling == "no_scaling":  # Set identity scaling (no scaling)
-            self._scaler = Scaling.no_scaling
+            self._scaler = NoScaler()
         else:
-            message = f"Argument \"scaling\" must be \"min_max\", \"normal\" or \"no_scaling\", was {scaling}"
+            message = f"Argument \"scaling\" must be \"min_max\", \"normal\" or \"no_scaling\", was {scaling}."
             raise ValueError(message)
 
     def train(self, x_train, y_train):
@@ -59,7 +60,8 @@ class KNN:
             x_train (np.array): (m x n)-dimensional array of n inputs with m features.
             y_train (np.array): (n)-dimensional array of true label classes.
         """
-        self.x_train, self._scaling_params = self._scaler(x_train, return_params=True)
+        check_arrays(x_train, y_train, dims=[0])
+        self.x_train = self._scaler.fit_transform(x_train)
         self.y_train = y_train
         self.m = len(x_train[0])  # Amount of features in one imput
         self.n = len(x_train)  # Amount of training inputs
@@ -69,8 +71,7 @@ class KNN:
         This is a method for chosing the predicted output from the k-nearest neighbours, "neighbours".
         KNNClassifier will chose the majority vote, while the KNNRegressor will chose the mean.
         """
-        print("!!!")
-        pass
+        raise NotImplementedError("KNN-baseclass must have \"_choose_from_neighbours\" overwritten.")
 
     def _predict_one(self, input):
         """
@@ -87,9 +88,8 @@ class KNN:
             message += f"Was input: {input.shape[0]} and train: {self.m}. "
             raise ValueError(message)
 
-        distances = np.zeros(self.n)
-        for i in range(self.n):  # Calculate all the distances
-            distances[i] = self._dist_func(input, self.x_train[i])
+        inputs = np.tile(input, (self.n, 1))  # Repeat "input" as n amount of rows
+        distances = self._dist_func(inputs, self.x_train)
 
         nearest_labels = np.zeros(self.k)  # The labels of the k nearest neighbours
         sorted = distances.copy()  # The k first elements are the k smallest distances
@@ -112,7 +112,7 @@ class KNN:
         """
         if len(inputs.shape) == 1:  # If only one input vector, convert to (1 x m) array.
             inputs = np.expand_dims(inputs, 0)
-        inputs = self._scaler(inputs, find_params=False, **self._scaling_params)  # Scale data
+        inputs = self._scaler.transform(inputs)  # Scale data
 
         predictions = np.zeros(len(inputs))
         for i in range(len(inputs)):

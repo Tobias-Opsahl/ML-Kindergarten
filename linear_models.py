@@ -5,7 +5,7 @@ One-vs-all Logistic Regression and Multinomial Logistic Regression
 """
 
 import numpy as np
-from common import find_mse
+from common import find_mse, check_array, check_arrays, integer_one_hot_encode
 
 
 class Perceptron:
@@ -40,19 +40,23 @@ class Perceptron:
     Methods:
         train: Trains the perceptron.
         predict: Predict on data.
-
-    TODO: If n_features and n_outputs is not provided, use the shapes of x_train and y_train in train().
     """
-    def __init__(self, n_features, n_outputs, learning_rate=0.3):
+    def __init__(self, n_features=None, n_outputs=None, learning_rate=0.3):
         """
+        Initializes weights and biases. If n_features or n_outputs is None, the weights and biases will be set
+        in training, depending on the sizes of the x_train and y_train arrays.
+
         Arguments:
             n_features (int): Amount of input nodes. This should be the number of features for each observation.
             n_outputs (int): Amount of ouput nodes. This should be the number of inputs in the targets.
             learning_rate (float): The learning rate for the weight updates
         """
-        self.weights = np.zeros((n_outputs, n_features))  # weights[output_node, input_node] by convention.
-        self.biases = np.zeros((n_outputs, 1))
+        self.weights = None
+        self.biases = None
         self.eta = learning_rate
+        if n_features is not None and n_outputs is not None:  # Initialize weights and biases
+            self.weights = np.zeros((n_outputs, n_features))  # weights[output_node, input_node] by convention.
+            self.biases = np.zeros((n_outputs, 1))
 
     def train(self, x_train, y_train, epochs=5, batch_size=1, verbose=True):
         """
@@ -66,8 +70,20 @@ class Perceptron:
             batch_size (int): How many input should be passed before the weight gets updated.
             verbose (bool): If True, will print if early stopping is reached.
         """
-        if len(y_train.shape) == 1:  # Expand dimensions incase of a one-dimensional (binary) target.
-            y_train = np.expand_dims(y_train, 1)
+        check_array(x_train, check_shape=2)  # Check that x_train has 2 dimensions.
+        check_arrays(x_train, y_train, dims=[0])  # Check that the amount of (n) points are equal.
+
+        if len(y_train.shape) == 1:  # 1d array, either one-hot-encode or expand-dims.
+            if np.unique(y_train).shape[0] > 2:  # More than two classes (multiclass), so we one-hot-encode
+                y_train = integer_one_hot_encode(y_train)
+            else:
+                y_train = np.expand_dims(y_train, 1)  # Expand dimensions of a one-dimensional (binary) target.
+
+        if self.weights is None:  # Initialize weights if it has not yet been done.
+            n_features = x_train.shape[1]
+            n_outputs = y_train.shape[1]
+            self.weights = np.zeros((n_outputs, n_features))  # weights[output_node, input_node] by convention.
+            self.biases = np.zeros((n_outputs, 1))
 
         b = batch_size
         for n_epoch in range(epochs):
@@ -170,6 +186,8 @@ class LinearRegression:
             tol_rounds (int): The amount of rounds that needs to be run without an improvement bigger
                 than "tol" for the training to be stopped.
         """
+        check_arrays(x_train, y_train, dims=[0])  # Check that the amount of (n) points are equal.
+
         if len(x_train.shape) == 1:  # Turn (n)-array into (n x 1)-matrix
             x_train = np.expand_dims(x_train, 1)
 
@@ -397,6 +415,5 @@ class MultinomialLogReg:
 
 
 if __name__ == "__main__":
-    # TODO: Makes tests on input-types and sizes
     # TODO: Makes unit tests
     pass

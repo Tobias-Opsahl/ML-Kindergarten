@@ -1,0 +1,13 @@
+# TODO:
+Small things:
+    Make one-hot-encoder as function or class to common.
+    Make unit tests.
+
+LinearModels:
+    LogisticRegression
+    OneVsRest
+    MultinomialLogisticRegression
+
+Large implementations:
+    Nerual Networks
+    Evolutionary Algorithms
