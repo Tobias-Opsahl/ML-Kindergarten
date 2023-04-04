@@ -226,6 +226,17 @@ def softmax(x_array):
     softmaxes = np.exp(x_array) / np.expand_dims(denominator, axis=1)
     return softmaxes
 
+def identity_function(input):
+    """
+    Identity function, returns whatever is inputed.
+
+    Arguments:
+        input (object): Any kind of input
+
+    Return:
+        input (object): The same as inputed
+    """
+    return input
 
 def plot_decision_regions(x_data, y_data, classifier, size=None, n_points=500,
                           title="Decision Regions", feature1="x1", feature2="x2", show=True):
@@ -264,7 +275,7 @@ def plot_decision_regions(x_data, y_data, classifier, size=None, n_points=500,
     preds = classifier.predict(predict_data)
     preds_mesh = preds.reshape(x_mesh.shape)  # Reshape back to [n_points x n_points]
     plt.figure(figsize=size)
-    plt.contourf(x_mesh, y_mesh, preds_mesh, alpha=0.2, cmap="Pastel1")  # Plot decision regions
+    plt.contourf(x_mesh, y_mesh, preds_mesh, alpha=0.2, cmap="Paired")  # Plot decision regions
     plt.scatter(x_data[:, 0], x_data[:, 1], c=y_data, s=10, cmap="Paired")  # Plot points
 
     # Plot stuff
