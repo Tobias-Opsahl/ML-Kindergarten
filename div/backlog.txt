@@ -1,10 +1,14 @@
 # TODO:
 Small things:
-    None
+    Worst classifications in visualize mnist (with logits)
+    NN stuff
+    Make own train_test_split function
+    Fix importing from parent folder (data_loaders and data_visualizer)
 
 Large implementations:
     Nerual Networks
     Evolutionary Algorithms
+    Unsupervised learning stuff
 
 Maybe:
     Netwons method for Multinomial logistic regression

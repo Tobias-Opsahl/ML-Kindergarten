@@ -16,18 +16,21 @@ class BaseScaler:
     def __init__(self):
         self.params = None  # Initialize parameters used for scaling.
 
-    def fit_transform(self, x_data):
+    def fit_transform(self, x_data, axis=0):
         """
         Both finds the scaling parameters with respect to x_data and scales it.
 
         Arguments:
             x_data (np.array): (n x m) array of n inputs with m features that will be scaled, according to the
                 parameters found by fitting the data.
+            axis (int): Which axis to perform the normalization over. If 0, will normalize over each
+                feature indendently. If 1, will normalize over each observation (row) independently.
+                If "None", will normalize over the whole arrays mean and std, preferable for images.
 
         Returns:
             scaled_data (np.array): (n x m) array of n inputs with m features. Scaled version of x_data.
         """
-        self.fit(x_data)
+        self.fit(x_data, axis=axis)
         return self.transform(x_data)
 
     def check_if_fitted(self):
@@ -57,7 +60,7 @@ class MinMaxScaler(BaseScaler):
     where min_j and max_j are the smallest and biggest value in the j'th dimension (of "data" or
     previously found). Values will be between 0 and 1 (if mins and maxes are found).
     """
-    def fit(self, x_data):
+    def fit(self, x_data, axis=0):
         """
         Fits the transforming. This means finding the parameters that scales the data.
         This means finding the mins and maxes for each feature.
@@ -65,9 +68,12 @@ class MinMaxScaler(BaseScaler):
         Arguments:
             x_data (np.array): (n x m) array of n inputs with m features. This data determines how the
                 data to transform() is scaled.
+            axis (int): Which axis to perform the normalization over. If 0, will normalize over each
+                feature indendently. If 1, will normalize over each observation (row) independently.
+                If "None", will normalize over the whole arrays mean and std, preferable for images.
         """
-        mins = np.expand_dims(x_data.min(axis=0), 0)  # Expand dims to broadcast on x_dat alater
-        maxes = np.expand_dims(x_data.max(axis=0), 0)
+        mins = np.expand_dims(x_data.min(axis=axis), 0)  # Expand dims to broadcast on x_dat alater
+        maxes = np.expand_dims(x_data.max(axis=axis), 0)
         self.params = {"mins": mins, "maxes": maxes}
 
     def transform(self, x_data):
@@ -113,7 +119,7 @@ class StandardScaler(BaseScaler):
                 means (np.array): (m)-dimensional data of caclulated means of each feature.
                 stds (np.array): (m)-dimensional data of caclulated stds of each feature.
     """
-    def fit(self, x_data):
+    def fit(self, x_data, axis=0):
         """
         Fits the transforming. This means finding the parameters that scales the data.
         This means saving the means and standard deviation for each feature.
@@ -121,9 +127,12 @@ class StandardScaler(BaseScaler):
         Arguments:
             x_data (np.array): (n x m) array of n inputs with m features. This data determines how the
                 data to transform() is scaled.
+            axis (int): Which axis to perform the normalization over. If 0, will normalize over each
+                feature indendently. If 1, will normalize over each observation (row) independently.
+                If "None", will normalize over the whole arrays mean and std, preferable for images.
         """
-        means = np.expand_dims(x_data.mean(axis=0), 0)  # Expand dims so that we can broadcast later.
-        stds = np.expand_dims(x_data.std(axis=0), 0)
+        means = np.expand_dims(x_data.mean(axis=axis), 0)  # Expand dims so that we can broadcast later.
+        stds = np.expand_dims(x_data.std(axis=axis), 0)
         self.params = {"means": means, "stds": stds}
 
     def transform(self, x_data):
@@ -147,7 +156,7 @@ class NoScaler(BaseScaler):
     This is a function that does no scaling. It is implemented so that the code
     that uses scaling can be more generic when it choses to not do scaling.
     """
-    def fit(self, x_data):
+    def fit(self, x_data, axis=0):
         """
         Simple makes the dict for the parameters, since no scaling will be done.
 

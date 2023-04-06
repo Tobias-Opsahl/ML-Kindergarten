@@ -2,7 +2,8 @@
 Graveyard for old function and classes removed, changed or improved.
 """
 import numpy as np
-import matplotlib.pyplot as plt
+import pickle
+import gzip
 
 
 # Non-vectorized distance, scaling, mse and accuracy:
@@ -184,7 +185,6 @@ def find_accuracy(predictions, labels):
 def find_mse(predictions, labels):
     """
     Calculates Mean Squared Error (MSE).
-    TODO: Fully vectorize this
     """
     if predictions.shape != labels.shape:  # Check for compatible arrays
         message = f"The prediction's dimensions must be equal to the true labels dimensions."
@@ -197,3 +197,16 @@ def find_mse(predictions, labels):
 
     mse = mse / predictions.shape[0]  # Divide by number of observations
     return mse
+
+
+# How to read the other type of mnist dataset
+def load_mnist(path="data/"):
+    """
+    Load the mnist dataset. It should be saved as mnist.pkl.gz in the same folder.
+    Arguments:
+        transform (bool): If True, transforms the data into flattened arrays.
+    """
+    f = gzip.open(path + "mnist.pkl.gz", "rb")
+    training_data, validation_data, test_data = pickle.load(f, encoding="latin1")
+    f.close()
+    return training_data, validation_data, test_data

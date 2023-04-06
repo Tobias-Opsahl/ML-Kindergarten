@@ -86,7 +86,8 @@ def check_array(x_array, check_type=True, check_shape=False, check_nans=True, ch
         raise ValueError(message)
 
 
-def check_arrays(x_array, y_array, dims=[0], check_type=True, check_shape=False, check_nans=False, check_inf=False):
+def check_arrays(x_array, y_array, dims=[], check_type=True, check_shape=False, check_nans=False, check_inf=False,
+                 same_shape_length=False, same_shape=False):
     """
     Check if arrays has the correct shapes and types.
 
@@ -98,18 +99,32 @@ def check_arrays(x_array, y_array, dims=[0], check_type=True, check_shape=False,
         check_shape (int): Checks that the length of the shape of the array is equal to "check_shape".
         check_nans (bool): Check if array contain nans.
         check_inf (bool): Check if array contains inf.
+        same_shape_length (bool): If True, check that arrays have the same amount of dimensions (shape is same length).
+        same_shape (bool): If True, check that the arrays match sizes in every dimensions.
     """
     check_array(x_array, check_type, check_shape, check_nans, check_inf)
     check_array(y_array, check_type, check_shape, check_nans, check_inf)
+
+    if same_shape:  # Check that every dimension matches
+        same_shape_length = True  # Checks first that we have same amount of dimensions
+        dims = np.arange(len(x_array.shape))  # Then set dims to check every dimension.
+
+    if same_shape_length:  # Check that the amount of dimensions are the same.
+        if len(x_array.shape) != len(y_array.shape):
+            message = f"Array shape-lengths mismatch. "
+            message += f"Was of length {len(x_array.shape)} and {len(y_array.shape)}. "
+            message += f"Total shape was {x_array.shape} and {y_array.shape}."
+            raise ValueError(message)
+
     for dim in dims:
         if x_array.shape[dim] != y_array.shape[dim]:
-            message = f"Array dimenions mismatch. Dimenion {dim} must be of same length, "
+            message = f"Array dimenions mismatch. Dimension {dim} must be of same length, "
             message += f"but was {x_array.shape[dim]} and {y_array.shape[dim]}. "
             message += f"Total shape was {x_array.shape} and {y_array.shape}."
             raise ValueError(message)
 
 
-def integer_one_hot_encode(x_array):
+def integer_one_hot_encode(x_array, max_int=None):
     """
     One hot encodes x_array.
     This assumes that x_arrays only has integer, and that the max element + 1 is the amount of class.
@@ -117,11 +132,14 @@ def integer_one_hot_encode(x_array):
 
     Arguments:
         x_array (np.array): (n) array of values to be one-hot-encoded.
+        max_int (int): Max int of class.
 
     Returns:
         one_hot_array (np.array): (n x c) array of one-hot-encoded data.
     """
-    one_hot_array = np.zeros((x_array.shape[0], x_array.max() + 1))  # Initialize empty array
+    if max_int is None:
+        max_int = x_array.max()
+    one_hot_array = np.zeros((x_array.shape[0], max_int + 1))  # Initialize empty array
     one_hot_array[np.arange(x_array.shape[0]), x_array] = 1  # Index rows (arange) and columns (x_array)
     return one_hot_array
 
@@ -142,8 +160,10 @@ def find_accuracy(predictions, targets):
         accuracy (float): The accuracy for the predictions
     """
     check_arrays(predictions, targets, dims=[0], check_type=True)
-
-    accuracy = (predictions == targets).mean()
+    if len(predictions.shape) == 2:
+        accuracy = (predictions == targets).all(axis=(1)).mean()
+    else:
+        accuracy = (predictions == targets).mean()
     return accuracy
 
 
@@ -171,8 +191,8 @@ def find_binary_cross_entropy(predictions, targets):
     Should be binary encoded, one float for each predictions, and targets 0 or 1.
 
     Arguments:
-        predictions (np.array): (n) array of predictions.
-        targets (np.array): (n) array of true target values.
+        predictions (np.array): (n x c) array of predictions.
+        targets (np.array): (n x c) array of true target values.
 
     Returns:
         cross_entropy (float): The cross_entropy calculated.
@@ -226,6 +246,7 @@ def softmax(x_array):
     softmaxes = np.exp(x_array) / np.expand_dims(denominator, axis=1)
     return softmaxes
 
+
 def identity_function(input):
     """
     Identity function, returns whatever is inputed.
@@ -237,6 +258,7 @@ def identity_function(input):
         input (object): The same as inputed
     """
     return input
+
 
 def plot_decision_regions(x_data, y_data, classifier, size=None, n_points=500,
                           title="Decision Regions", feature1="x1", feature2="x2", show=True):
