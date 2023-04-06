@@ -12,11 +12,8 @@ from exceptions import NotTrainedError
 
 """
 TODO:
-Add just binary classification one node output
-Add weight-initializaton
 Add gradient-checking
 Save + Read weights
-Add regularization
 Add optimizers
 Add dropout
 """
@@ -78,7 +75,7 @@ class NeuralNetwork:
     """
 
     def __init__(self, layer_sizes, model_type="multilabel", activation_functions=None, loss_function=None,
-                 weight_initialization="plain", threshold=0.5):
+                 weight_initialization="plain", fan_mode="fan_in", threshold=0.5):
         """
         Type-checks, initializes weights and biases and other stuff.
         Works for:
@@ -100,7 +97,10 @@ class NeuralNetwork:
                 the last activation function (output function), this is determined by "model_type".
             loss_function (callable): Loss function. This will only be used to calculate loss during
                 training, since loss function for training will be assumed from "model_type".
-            weight_initialization (str): How the weights should be initialized.
+            weight_initialization (str): How the weights should be initialized. Se _initialize_weights()
+                for more information.
+            fan_mode (str): Decides wether to use "fan_in" or "fan_out" in kaiming_he initialization.
+                Must be in ["fan_in", "fan_out"].
             threshold (float): Threshold for predicting when using model_type as "mutlilabel".
         """
         # Check types and stuff
@@ -124,16 +124,25 @@ class NeuralNetwork:
             message = "Nodes in output layer must be exactly 1 for regression or binary classification networks. "
             message += f"Was {self.layer_sizes[-1]}. "
             raise ValueError(message)
+        valid_weight_initializations = ["standard_normal", "plain", "glorot_uniform", "glorot_normal", "glorot",
+                                        "xavier", "kaiming_he_uniform", "kaiming_he_normal", "kaiming_he", "he"]
+        if weight_initialization not in valid_weight_initializations:
+            message = f"Argument \"weight_initialization\" must be in {valid_weight_initializations}. "
+            message += f"Was {weight_initialization}. "
+            raise ValueError(message)
+        if fan_mode not in ["fan_in", "fan_out"]:
+            message = f"Argument \"fan_mode\" must be in [\"fan_in\", \"fan_out\"]. Was {fan_mode}. "
+            raise ValueError(message)
 
         # Save class variables
         self.n_layers = len(layer_sizes)
         self.layer_sizes = layer_sizes
         self.threshold = threshold
-        self._initialize_weights(layer_sizes, weight_initialization)
-
         self.activation_functions = activation_functions
         if activation_functions is None:  # Set activation functions if they are not provided
             self.activation_functions = [Sigmoid()] * (self.n_layers - 2)
+
+        self._initialize_weights(layer_sizes, weight_initialization, fan_mode)
 
         self.model_type = model_type
         if model_type == "regression":
@@ -154,7 +163,7 @@ class NeuralNetwork:
         self.epochs_ran = None  # Will be marked with number of epochs ran after training
 
     def train(self, x_train, y_train, eta=0.1, epochs=10, minibatch_size=64,
-              evaluate=False, eval_set=None, verbose=False):
+              evaluate=False, eval_set=None, lam=0, verbose=False):
         """
         Trains network.
 
@@ -168,8 +177,10 @@ class NeuralNetwork:
             evaluate (bool): If True, will calculate training loss and accuracy after each epoch.
             eval_set (tuple): If not None, will calculate validation loss and accuracy after each epoch.
                 eval_set = (x_val, y_val). Will overide "evaluate" to True
+            lam (float): Lambda hyperparameter for managing L2 penalty for weight-updates.
             verbose (bool): If True, will print output.
         """
+        self.lam = lam
         self._evaluate = evaluate
         self._preprocess(x_train, y_train, eval_set)
 
@@ -261,12 +272,62 @@ class NeuralNetwork:
         if show:
             plt.show()
 
-    def _initialize_weights(self, layer_sizes, weight_initialization):
+    def _initialize_weights(self, layer_sizes, method, fan_mode="fan_in"):
         """
-        Initializes weights.
+        Initializes weights. "method" must be in:
+        ["standard_normal", "plain", "glorot_uniform", "glorot_normal", "kaming_he_uniform", "kaiming_he_normal"]
+        See https://pytorch.org/docs/stable/nn.init.html for more information, including reference to papers.
+
+        Methods:
+            standard_normal: Sets all weights to be drawn from standard normal distribution. Not recommended, since
+                it does not look at amount of nodes in and out.
+            plain: Draw all weights from N(0, 1/sqrt(n_in)).
+            glorot_uniform: Draw all weights from U(-sqrt(6 / (n_in + n_out)), sqrt(6 / (n_in + n_out)))
+            glorot_normal: Recommended for sigmoid or tanh. Draw all weights from N(0, sqrt(2 / (n_in + n_out)))
+            kaiming_he_uniform: Draw all weights from U(-sqrt(6 / fan_mode), sqrt(6 / fan_mode))
+            kaiming_he_normal: Recommended for ReLU and LeakyReLU. Draw all weights from N(0, sqrt(2 / fan_mode))
+
+        Arguments:
+            layers_sizes (list): List of int of nodes in each layer.
+            method (str): Method to use, see above.
+            fan_mode (str): Wether to use n_nodes_in or n_nodes_out for kaiming-he.
+                Must be in ["fan_in", "fan_out"]
         """
         self.biases = [np.random.randn(1, layer_sizes[i]) for i in range(1, len(layer_sizes))]
-        self.weights = [np.random.randn(layer_sizes[i], layer_sizes[i - 1]) for i in range(1, len(layer_sizes))]
+        self.weights = []
+        if method == "standard_normal":
+            self.weights = [np.random.randn(layer_sizes[i], layer_sizes[i - 1]) for i in range(1, len(layer_sizes))]
+
+        elif method == "plain":
+            for i in range(len(self.layer_sizes) - 1):
+                std = 1 / np.sqrt(layer_sizes[i])
+                self.weights.append(np.random.randn(layer_sizes[i + 1], layer_sizes[i]) * std)
+
+        elif method == "glorot_uniform":
+            for i in range(len(self.layer_sizes) - 1):
+                a = np.sqrt(6 / (layer_sizes[i] + layer_sizes[i + 1]))
+                self.weights.append(np.random.uniform(-a, a, (layer_sizes[i + 1], layer_sizes[i])))
+
+        elif method == "glorot_normal" or method == "glorot" or method == "xavier":
+            for i in range(len(self.layer_sizes) - 1):
+                std = np.sqrt(2 / (layer_sizes[i] + layer_sizes[i + 1]))
+                self.weights.append(np.random.randn(layer_sizes[i + 1], layer_sizes[i]) * np.sqrt(2 / layer_sizes[i]))
+
+        elif method == "kaiming_he_uniform":
+            for i in range(len(self.layer_sizes) - 1):
+                if fan_mode == "fan_in":
+                    a = np.sqrt(6 / layer_sizes[i])
+                elif fan_mode == "fan_out":
+                    a = np.sqrt(6 / layer_sizes[i + 1])
+                self.weights.append(np.random.uniform(-a, a, (layer_sizes[i + 1], layer_sizes[i])))
+
+        elif method == "kaiming_he_normal" or method == "kaiming_he" or method == "he":
+            for i in range(len(self.layer_sizes) - 1):
+                if fan_mode == "fan_in":
+                    std = np.sqrt(2 / layer_sizes[i])
+                elif fan_mode == "fan_out":
+                    std = np.sqrt(2 / layer_sizes[i + 1])
+                self.weights.append(np.random.randn(layer_sizes[i + 1], layer_sizes[i]) * np.sqrt(2 / layer_sizes[i]))
 
     def _preprocess(self, x_train, y_train, eval_set):
         """
@@ -404,9 +465,13 @@ class NeuralNetwork:
         """
         for i in range(self.n_layers - 1):
             # dC/db(l) [n(l)] = del(l) [n x n(l)].sum(axis=0)
-            self.biases[i] -= (eta / n_data) * deltas[i].sum(axis=0)
+            d_biases = deltas[i].sum(axis=0)  # Normal update term
+            l2_term_biases = self.lam * self.biases[i]  # L2 Regularization term
+            self.biases[i] -= (eta / n_data) * (l2_term_biases + d_biases)  # With L2 regularization term
             # dC/dw(l) [n(l) x n(l-1)] = del(l).T [n(l) x n] @ a(l-1) [n x n(l-1)]
-            self.weights[i] -= (eta / n_data) * deltas[i].T @ self.activations[i]
+            d_weights = deltas[i].T @ self.activations[i]  # Normal update term
+            l2_term_weights = self.lam * self.weights[i]  # L2 regularization term
+            self.weights[i] -= (eta / n_data) * (l2_term_weights + d_weights)  # With L2 regularization
 
     def _perform_evaluation(self, n_epoch, verbose):
         """
@@ -460,7 +525,7 @@ class NeuralNetwork:
 
 if __name__ == "__main__":
     # Code for running the files. This will of course be put into a more nicer looking notebook after a while.
-    # from IPython import embed
+    from IPython import embed
     from data import data_loaders
     from data import data_visualizer
     from sklearn.datasets import load_diabetes
@@ -472,10 +537,20 @@ if __name__ == "__main__":
     x_train, y_train = train_data
     x_val, y_val = val_data
     x_test, y_test = test_data
+
+    # Weight initialization
+    weight_initializations = ["standard_normal", "plain", "glorot_uniform", "glorot_normal",
+                              "kaiming_he_uniform", "kaiming_he_normal"]
+    for weight_in in weight_initializations:
+        print(f"\n {weight_in} \n")
+        np.random.seed(57)
+        nn = NeuralNetwork([784, 40, 10], model_type="multiclass", weight_initialization=weight_in)
+        nn.train(x_train, y_train, eta=2, epochs=5, eval_set=(x_val, y_val), verbose=True, minibatch_size=128)
+
     # Multiclass MNIST
-    nn = NeuralNetwork([784, 16, 16, 10], model_type="multiclass")
+    # nn = NeuralNetwork([784, 40, 30, 20, 10], model_type="multiclass", weight_initialization="xavier")
     nn = NeuralNetwork([784, 40, 10], model_type="multiclass")
-    nn.train(x_train, y_train, eta=2, epochs=20, eval_set=(x_val, y_val), verbose=True, minibatch_size=128)
+    nn.train(x_train, y_train, eta=2, epochs=20, eval_set=(x_val, y_val), verbose=True, minibatch_size=128, lam=0)
     preds = nn.predict(x_val)
     nn.plot_stats()
     data_visualizer.plot_mnist_random(x_val, preds=preds, labels=y_val, n_random=20)
@@ -505,10 +580,9 @@ if __name__ == "__main__":
     x_train, y_train = train_data
     x_val, y_val = val_data
     x_test, y_test = test_data
-    nn = NeuralNetwork([784, 30, 20, 10], model_type="multiclass")
     # nn = NeuralNetwork([784, 16, 16, 10], model_type="multilabel")
-    nn.train(x_train, y_train, eta=0.1, epochs=20, eval_set=(x_test, y_test),
-             verbose=True, minibatch_size=128)
+    nn = NeuralNetwork([784, 30, 10], model_type="multiclass", weight_initialization="glorot_normal")
+    nn.train(x_train, y_train, eta=1, epochs=20, eval_set=(x_test, y_test), verbose=True, minibatch_size=128, lam=0.01)
     preds = nn.predict(x_test)
     nn.plot_stats()
     data_visualizer.plot_mnist_random(x_test, preds=preds, labels=y_test, n_random=20)
@@ -518,6 +592,6 @@ if __name__ == "__main__":
     np.random.seed(57)
     diabetes = load_diabetes()
     x_train_d, x_val_d, y_train_d, y_val_d = train_test_split(diabetes["data"][:, 0:9], diabetes["target"], test_size=0.25)
-    nn = NeuralNetwork([9, 5, 1], model_type="regression")
+    nn = NeuralNetwork([9, 5, 1], model_type="regression", weight_initialization="glorot_normal")
     nn.train(x_train_d, y_train_d, eval_set=(x_val_d, y_val_d), verbose=True, eta=0.005, minibatch_size=20, epochs=100)
     nn.plot_stats()  # SGD manage to escape local optimum, not possible with minibatch_size = 331 (input size)
