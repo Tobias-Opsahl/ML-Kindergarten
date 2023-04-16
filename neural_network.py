@@ -13,11 +13,11 @@ from exceptions import NotTrainedError
 """
 TODO:
 Add gradient-checking
-Save + Read weights
+Save + Read weightsm
 Add optimizers
 Add dropout
+Add visualization for weight layers
 """
-
 
 class NeuralNetwork:
     """
@@ -31,7 +31,7 @@ class NeuralNetwork:
 
     Notation and sizes of arrays:
     []-marks sizes of dimensions. "d" marks derivative.
-    "*" Marks elementwise product. "@" marks matrix multiplication. "o" marks outer product.
+    "*" Marks elementwise product. "@" marks matrix multiplication. "o" marks omuter product.
 
     n: Amount of (mini-batch) inputs
     m: Amount of features in the inputs
@@ -75,7 +75,7 @@ class NeuralNetwork:
     """
 
     def __init__(self, layer_sizes, model_type="multilabel", activation_functions=None, loss_function=None,
-                 weight_initialization="plain", fan_mode="fan_in", threshold=0.5):
+                 weight_initialization="plain", fan_mode="fan_in", threshold=0.5, dropouts=None):
         """
         Type-checks, initializes weights and biases and other stuff.
         Works for:
@@ -102,6 +102,10 @@ class NeuralNetwork:
             fan_mode (str): Decides wether to use "fan_in" or "fan_out" in kaiming_he initialization.
                 Must be in ["fan_in", "fan_out"].
             threshold (float): Threshold for predicting when using model_type as "mutlilabel".
+            dropout (list of floats): If not None, will use dropout in the layers. Each layer l will have a keep
+                probability of "outputs" l´th position, [p_1, ..., p_N], where p_i is on (0, 1].
+                Note: Dropout significantly slows down training. The bottleneck is drawing bernulli data with
+                np.random.binomial. I could not find any more efficiently implemented functions.
         """
         # Check types and stuff
         if not hasattr(layer_sizes, "__len__"):
@@ -124,6 +128,20 @@ class NeuralNetwork:
             message = "Nodes in output layer must be exactly 1 for regression or binary classification networks. "
             message += f"Was {self.layer_sizes[-1]}. "
             raise ValueError(message)
+        if dropouts is not None:
+            if not hasattr(dropouts, "__len__"):
+                message = f"Argument \"dropouts\" must be list or array. "
+                raise ValueError(message)
+            if len(dropouts) != len(layer_sizes) - 1:
+                message = f"Length of argument \"dropouts\" must be of length len(layer_sizes) - 1. "
+                message += f"Length of \"dropouts\" was {len(dropouts)}, but length of \"layers_sizes\" "
+                message += "was {len(layer_sizes)}. "
+                raise ValueError(message)
+            for p in dropouts:
+                if not ((p <= 1) and (p > 0)):
+                    message = f"Every argument of \"dropouts\" must be float in (0, 1]. Was {p}. "
+                    raise ValueError(message)
+
         valid_weight_initializations = ["standard_normal", "plain", "glorot_uniform", "glorot_normal", "glorot",
                                         "xavier", "kaiming_he_uniform", "kaiming_he_normal", "kaiming_he", "he"]
         if weight_initialization not in valid_weight_initializations:
@@ -141,6 +159,9 @@ class NeuralNetwork:
         self.activation_functions = activation_functions
         if activation_functions is None:  # Set activation functions if they are not provided
             self.activation_functions = [Sigmoid()] * (self.n_layers - 2)
+        self.dropouts = dropouts
+        if dropouts is None:  # Set default value for dropouts, dropout = 1 means no dropout.
+            self.dropouts = np.ones(self.n_layers - 1)
 
         self._initialize_weights(layer_sizes, weight_initialization, fan_mode)
 
@@ -204,7 +225,7 @@ class NeuralNetwork:
                 n_data = upper_index - i * b  # Should be b unless last iteration
                 batch = self.x_train[i * b: upper_index]  # Index batch
                 targets = self.y_train[i * b: upper_index]  # Index targets
-                preds = self._forward(batch)  # Get logits (ouput-nodes) values
+                preds = self._forward(batch, training=True)  # Get logits (ouput-nodes) values, and save other values
                 deltas = self._backprop(preds, targets)  # Get dela-error terms from backprop
                 self._update_params(deltas, eta, n_data)  # Update weights and biases
 
@@ -408,24 +429,48 @@ class NeuralNetwork:
                 message += f"Was {self.x_val.shape[1]} and {self.layer_sizes[0]}. "
                 raise ValueError(message)
 
-    def _forward(self, x_data):
+    def _forward(self, x_data, training=False):
         """
         Feeds the data forward. Do not discretize the output (give logits values).
         For each layer, calculates the activations, and feeds forward.
 
         Arguments:
             x_data (np.array): [n x m] data to forward.
+            training (boolean): Mark True if forwarded during training, else False.
+                If True, will enable (inversed) dropout.
 
         Returns:
             activations (np.array): [n x c] array over logits outputs (activations of last layer).
         """
         self.weighted_sums = []  # Save weighted sums for backpropagation
         self.activations = []  # Save all the activations for backpropagation
+        self.dropout_coeffs = []  # Save the dropout coeffs for backprogatation step
+        if training and self.dropouts[0] != 1:  # Perform dropout on inputs
+            p = self.dropouts[0]
+            # bernullis = np.random.binomial(1, p, (x_data.shape[0], self.layer_sizes[0]))
+            # For some reason this is faster than binomial
+            bernullis = np.random.rand(x_data.shape[0], x_data.shape[1]) < p  
+            dropout_coeff = bernullis / p  # Do the scaling in trainig, inverse dropout (and converts bool to int)
+            x_data = dropout_coeff * x_data  # Perform the dropout elementwise multiplication
+            self.dropout_coeffs.append(dropout_coeff)
+        else:
+            self.dropout_coeffs.append(np.ones_like(x_data))  # Save ones incase no dropout in first layer
         self.activations.append(x_data)
         for i in range(self.n_layers - 1):
             # z(l) [n x n(l)] = a(l-1) [n x n(l-1)] @ w(l) [n(l) x n(l-1)].T + b(l) [1, n(l)]
             weighted_sum = self.activations[i] @ self.weights[i].T + self.biases[i]
             activation = self.activation_functions[i](weighted_sum)  # a(l) = s(z(l))
+
+            if training and self.dropouts[i] != 1 and i < (self.n_layers - 2):  # Perform dropout (not on last layer)
+                p = self.dropouts[i]
+                # bernullis = np.random.binomial(1, p, (x_data.shape[0], self.layer_sizes[i + 1]))
+                # For some reason this is faster than binomial
+                bernullis = np.random.rand(activation.shape[0], activation.shape[1]) < p 
+                dropout_coeff = bernullis / p  # Do the scaling in trainig, inverse dropout
+                activation = dropout_coeff * activation  # Perform the dropout elementwise multiplication
+                self.dropout_coeffs.append(dropout_coeff)
+            elif i < (self.n_layers - 2):
+                self.dropout_coeffs.append(np.ones_like(activation))  # Save ones if no dropout here, but other places
             self.weighted_sums.append(weighted_sum)
             self.activations.append(activation)
         return self.activations[-1]
@@ -451,6 +496,8 @@ class NeuralNetwork:
             # del(l) [n x n(l)] = (del(l+1) [n x n(l+1)] @ w(l+1) [n(l+1) x n(l)]) [n x n(l)] * s'(z(l)) [n x n(l)]
             delta = prev_delta @ self.weights[index]
             delta = delta * self.activation_functions[-(i + 1)].diff(self.weighted_sums[index - 1])
+            if self.dropouts[-i] != 1:  # Multiply with the dropout coeffs:
+                delta = delta * self.dropout_coeffs[-i]
             deltas.insert(0, delta)
         return deltas
 
@@ -548,13 +595,29 @@ if __name__ == "__main__":
         nn.train(x_train, y_train, eta=2, epochs=5, eval_set=(x_val, y_val), verbose=True, minibatch_size=128)
 
     # Multiclass MNIST
-    # nn = NeuralNetwork([784, 40, 30, 20, 10], model_type="multiclass", weight_initialization="xavier")
-    nn = NeuralNetwork([784, 40, 10], model_type="multiclass")
-    nn.train(x_train, y_train, eta=2, epochs=20, eval_set=(x_val, y_val), verbose=True, minibatch_size=128, lam=0)
+    nn = NeuralNetwork([784, 40, 30, 20, 10], model_type="multiclass", weight_initialization="xavier")
+    x_train, y_train = x_train[:10000], y_train[:10000]
+    nn = NeuralNetwork([784, 40, 10], model_type="multiclass", dropouts=[0.8, 0.9])
+    nn.train(x_train, y_train, eta=1, epochs=30, eval_set=(x_val, y_val), verbose=True, minibatch_size=128, lam=0)
     preds = nn.predict(x_val)
     nn.plot_stats()
     data_visualizer.plot_mnist_random(x_val, preds=preds, labels=y_val, n_random=20)
     data_visualizer.plot_mnist_mislabeled(x_val, preds=preds, labels=y_val, n_random=20)
+
+    # Dropout
+    np.random.seed(57)
+    small_size = 3000
+    x_train_small, y_train_small = x_train[:small_size], y_train[:small_size]
+    nn = NeuralNetwork([784, 40, 40, 10], model_type="multiclass")
+    # This should overfit:
+    nn.train(x_train_small, y_train_small, eta=3, epochs=50, eval_set=(x_val, y_val), verbose=True, minibatch_size=128)
+    preds = nn.predict(x_val)
+    nn.plot_stats()
+    nn = NeuralNetwork([784, 40, 40, 10], model_type="multiclass", dropouts=[0.8, 0.75, 0.8])
+    # This should not overfit (but varies much and is not so robust):
+    nn.train(x_train_small, y_train_small, eta=3, epochs=50, eval_set=(x_val, y_val), verbose=True, minibatch_size=128)
+    preds = nn.predict(x_val)
+    nn.plot_stats()
 
     # Binary classification
     train_indices = y_train == 2
