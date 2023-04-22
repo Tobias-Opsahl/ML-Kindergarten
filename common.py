@@ -141,6 +141,7 @@ def integer_one_hot_encode(x_array, max_int=None):
         max_int = x_array.max()
     one_hot_array = np.zeros((x_array.shape[0], max_int + 1))  # Initialize empty array
     one_hot_array[np.arange(x_array.shape[0]), x_array] = 1  # Index rows (arange) and columns (x_array)
+    one_hot_array = one_hot_array.astype(np.uint8)
     return one_hot_array
 
 

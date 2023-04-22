@@ -1,3 +1,7 @@
 __pycache__/
 **/__pycache__/
 .vscode/
+test_file.*
+test_image.*
+**/.DS_Store
+data/cifar/cifar-100-python/*
