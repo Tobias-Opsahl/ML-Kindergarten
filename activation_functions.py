@@ -8,6 +8,7 @@ class Sigmoid:
     def __call__(self, x_array):
         """
         Performs the sigmoid function on every element in x_array.
+        Sigmoid is defined as 1 / (1 + exp(-x)), or exp(x) / (1 + exp(x)).
 
         Arguments:
             x_array (np.array): (n) array of float values.
@@ -15,7 +16,8 @@ class Sigmoid:
         Returns:
             simoids (np.array): (n) array of the sigmoid function, every element is between 0 and 1.
         """
-        return 1 / (1 + np.exp(-x_array))
+        sigmoids = 1 / (1 + np.exp(-x_array))
+        return sigmoids
 
     def diff(self, x_array):
         """
@@ -60,8 +62,28 @@ class Tanh:
 
 
 class ReLU:
-    pass
+    def __call__(self, x_array):
+        """
+        Performs the Rectified Linear Unit (ReLU) function on every element in x_array.
+        ReLU is defined as max(0, x).
 
+        Arguments:
+            x_array (np.array): (n) array of float values.
 
-class LeakyReLU:
-    pass
+        Returns:
+            simoids (np.array): (n) array of the relu function.
+        """
+        return np.maximum(0, x_array)
+
+    def diff(self, x_array):
+        """
+        Returns derivative of the ReLU function.
+        This is 0 if x < 0 and 1 else.
+
+        Arguments:
+            x_array (np.array): (n) array of float values.
+
+        Returns:
+            diff (np.array): (n) array of the derivatives of the ReLU function.
+        """
+        return (x_array > 0) * 1  # Vectorize the piecewise function

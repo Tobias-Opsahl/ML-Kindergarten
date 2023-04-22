@@ -13,11 +13,10 @@ from exceptions import NotTrainedError
 """
 TODO:
 Add gradient-checking
-Save + Read weightsm
-Add optimizers
-Add dropout
+Save + Read weights
 Add visualization for weight layers
 """
+
 
 class NeuralNetwork:
     """
@@ -183,8 +182,8 @@ class NeuralNetwork:
                 self.loss_function = find_binary_cross_entropy
         self.epochs_ran = None  # Will be marked with number of epochs ran after training
 
-    def train(self, x_train, y_train, eta=0.1, epochs=10, minibatch_size=64,
-              evaluate=False, eval_set=None, lam=0, verbose=False):
+    def train(self, x_train, y_train, eta=0.1, epochs=10, minibatch_size=64, evaluate=False, eval_set=None,
+              lam=0, optimizer="SGD", correct_bias=False, beta1=0.9, beta2=0.999, epsilon=10e-4, verbose=False):
         """
         Trains network.
 
@@ -199,9 +198,31 @@ class NeuralNetwork:
             eval_set (tuple): If not None, will calculate validation loss and accuracy after each epoch.
                 eval_set = (x_val, y_val). Will overide "evaluate" to True
             lam (float): Lambda hyperparameter for managing L2 penalty for weight-updates.
+            optimizer (str): The method use to update the weights.
+                Must be in ["SGD", "momentum", "RMSprop", "Adam"]
+            correct_bias (bool): If True, will do bias correctiong. This means scaling the
+                moment so that the first updates are not too small (since the moment starts at 0).
+            beta1 (float): The first moment parameter, specifying how much the momentum for the
+                gradient is updated in "Momentum" and "Adam".
+            beta2 (float): The second moment parameter, indicating how much the running average
+                for RMSprop is updated in "RMSProp" and "Adam".
+            epsilon (float): The stabilizing parameter in the denominator for "RMSProp" and "Adam".
             verbose (bool): If True, will print output.
         """
+        # Initialize parameters
         self.lam = lam
+        self.beta1 = beta1
+        self.beta2 = beta2
+        self.epsilon = epsilon
+        self.momentum_b = []
+        self.momentum_w = []
+        self.second_moment_b = []
+        self.second_moment_w = []
+        for i in range(1, self.n_layers):
+            self.momentum_b.append(np.zeros(self.layer_sizes[i]))
+            self.momentum_w.append(np.zeros((self.layer_sizes[i], self.layer_sizes[i - 1])))
+            self.second_moment_b.append(np.zeros(self.layer_sizes[i]))
+            self.second_moment_w.append(np.zeros((self.layer_sizes[i], self.layer_sizes[i - 1])))
         self._evaluate = evaluate
         self._preprocess(x_train, y_train, eval_set)
 
@@ -227,7 +248,7 @@ class NeuralNetwork:
                 targets = self.y_train[i * b: upper_index]  # Index targets
                 preds = self._forward(batch, training=True)  # Get logits (ouput-nodes) values, and save other values
                 deltas = self._backprop(preds, targets)  # Get dela-error terms from backprop
-                self._update_params(deltas, eta, n_data)  # Update weights and biases
+                self._update_params(deltas, eta, n_data, optimizer, correct_bias, n_epoch + 1)  # Update parameters
 
             if self._evaluate:  # Calculate loss and optinally accuracies
                 self._perform_evaluation(n_epoch, verbose)
@@ -420,12 +441,12 @@ class NeuralNetwork:
         Check if feature in x-data match with input nodes.
         """
         if self.x_train.shape[1] != self.layer_sizes[0]:
-            message = "Features in training data (x_train) much mach nodes in first layer (layer_sizes). "
+            message = "Features in training data (x_train) must mach nodes in first layer (layer_sizes). "
             message += f"Was {self.x_train.shape[1]} and {self.layer_sizes[0]}. "
             raise ValueError(message)
         if self._evaluate:
             if self.x_val.shape[1] != self.layer_sizes[0]:
-                message = "Features in validation data (x_val) much mach nodes in first layer (layer_sizes). "
+                message = "Features in validation data (x_val) must mach nodes in first layer (layer_sizes). "
                 message += f"Was {self.x_val.shape[1]} and {self.layer_sizes[0]}. "
                 raise ValueError(message)
 
@@ -449,7 +470,7 @@ class NeuralNetwork:
             p = self.dropouts[0]
             # bernullis = np.random.binomial(1, p, (x_data.shape[0], self.layer_sizes[0]))
             # For some reason this is faster than binomial
-            bernullis = np.random.rand(x_data.shape[0], x_data.shape[1]) < p  
+            bernullis = np.random.rand(x_data.shape[0], x_data.shape[1]) < p
             dropout_coeff = bernullis / p  # Do the scaling in trainig, inverse dropout (and converts bool to int)
             x_data = dropout_coeff * x_data  # Perform the dropout elementwise multiplication
             self.dropout_coeffs.append(dropout_coeff)
@@ -465,7 +486,7 @@ class NeuralNetwork:
                 p = self.dropouts[i]
                 # bernullis = np.random.binomial(1, p, (x_data.shape[0], self.layer_sizes[i + 1]))
                 # For some reason this is faster than binomial
-                bernullis = np.random.rand(activation.shape[0], activation.shape[1]) < p 
+                bernullis = np.random.rand(activation.shape[0], activation.shape[1]) < p
                 dropout_coeff = bernullis / p  # Do the scaling in trainig, inverse dropout
                 activation = dropout_coeff * activation  # Perform the dropout elementwise multiplication
                 self.dropout_coeffs.append(dropout_coeff)
@@ -501,9 +522,37 @@ class NeuralNetwork:
             deltas.insert(0, delta)
         return deltas
 
-    def _update_params(self, deltas, eta, n_data):
+    def _update_params(self, deltas, eta, n_data, optimizer="SGD", correct_bias=False, t=999):
         """
-        Update every parameter, given the delta values.
+        Update every parameter, given the delta values. Calls the function corresponding to
+        the optimizer.
+
+        Arguments:
+            deltas (list): The delta values returned from _backprop.
+            eta (float): Learning rate of the optimizer.
+            n_data (int): Amount of datapoints used in minibatch
+            optimizer (str): The method use to update the weights.
+                Must be in ["SGD", "momentum", "RMSprop", "Adam"]
+            correct_bias (bool): If True, will do bias correctiong. This means scaling the
+                moment so that the first updates are not too small (since the moment starts at 0).
+            t (int): The timestep the update happens at. This is used for bias-correction.
+        """
+        if optimizer.lower() in ["sgd", "vanilla", "vanilla_sgd"]:
+            self._sgd(deltas, eta, n_data)
+        elif optimizer.lower() in ["momentum", "moment"]:
+            self._momentum(deltas, eta, n_data, correct_bias, t)
+        elif optimizer.lower() in ["rms", "rmsprop", "rms-prop", "rms_prop", "rms-propagation", "rms_propagation"]:
+            self._rms_prop(deltas, eta, n_data, correct_bias, t)
+        elif optimizer.lower() in ["adam", "adamw"]:
+            self._adam(deltas, eta, n_data, t)
+        else:
+            message = f"Argument \"optimizer\" to NeuralNetowrk.train() must be in "
+            message += f"[\"SGD\", \"momentum\", \"RMSprop\", \"adam\"], was {optimizer}. "
+            raise ValueError(message)
+
+    def _sgd(self, deltas, eta, n_data):
+        """
+        Uses vanilla Stochastic Gradient Descent (SGD) to update parameters.
 
         Arguments:
             deltas (list): The delta values returned from _backprop.
@@ -515,10 +564,104 @@ class NeuralNetwork:
             d_biases = deltas[i].sum(axis=0)  # Normal update term
             l2_term_biases = self.lam * self.biases[i]  # L2 Regularization term
             self.biases[i] -= (eta / n_data) * (l2_term_biases + d_biases)  # With L2 regularization term
+
             # dC/dw(l) [n(l) x n(l-1)] = del(l).T [n(l) x n] @ a(l-1) [n x n(l-1)]
             d_weights = deltas[i].T @ self.activations[i]  # Normal update term
             l2_term_weights = self.lam * self.weights[i]  # L2 regularization term
             self.weights[i] -= (eta / n_data) * (l2_term_weights + d_weights)  # With L2 regularization
+
+    def _momentum(self, deltas, eta, n_data, correct_bias=False, t=999):
+        """
+        Uses conventional momentum (CM) with SGD to update parameters.
+        NOTE: The bias-correction does not really work, except if the learning rate is way to low.
+
+        Arguments:
+            deltas (list): The delta values returned from _backprop.
+            eta (float): Learning rate of the optimizer.
+            n_data (int): Amount of datapoints used in minibatch.
+            correct_bias (bool): If True, will do bias correctiong. This means scaling the
+                moment so that the first updates are not too small (since the moment starts at 0).
+            t (int): The timestep the update happens at. This is used for bias-correction.
+        """
+        for i in range(self.n_layers - 1):
+            # dC/db(l) [n(l)] = del(l) [n x n(l)].sum(axis=0)
+            d_biases = deltas[i].sum(axis=0)  # Normal update term
+            self.momentum_b[i] = self.beta1 * self.momentum_b[i] + (1 - self.beta1) * d_biases
+            mt_b = self.momentum_b[i]
+            if correct_bias:
+                mt_b /= (1 - self.beta1 ** t)
+            l2_term_biases = self.lam * self.biases[i]  # L2 Regularization term
+            self.biases[i] -= (eta / n_data) * (l2_term_biases + mt_b)  # With L2 regularization term
+
+            # dC/dw(l) [n(l) x n(l-1)] = del(l).T [n(l) x n] @ a(l-1) [n x n(l-1)]
+            d_weights = deltas[i].T @ self.activations[i]  # Normal update term
+            self.momentum_w[i] = self.beta1 * self.momentum_w[i] + (1 - self.beta1) * d_weights
+            mt_w = self.momentum_w[i]
+            if correct_bias:
+                mt_w /= (1 - self.beta1 ** t)
+            l2_term_weights = self.lam * self.weights[i]  # L2 regularization term
+            self.weights[i] -= (eta / n_data) * (l2_term_weights + mt_w)  # With L2 regularization
+
+    def _rms_prop(self, deltas, eta, n_data, correct_bias=True, t=999):
+        """
+        Uses RMS prop to updeight parameters.
+        NOTE: The bias-correction does not really work, except if the learning rate is way to low.
+
+        Arguments:
+            deltas (list): The delta values returned from _backprop.
+            eta (float): Learning rate of the optimizer.
+            n_data (int): Amount of datapoints used in minibatch
+            correct_bias (bool): If True, will do bias correctiong. This means scaling the
+                moment so that the first updates are not too small (since the moment starts at 0).
+            t (int): The timestep the update happens at. This is used for bias-correction.
+        """
+        for i in range(self.n_layers - 1):
+            # dC/db(l) [n(l)] = del(l) [n x n(l)].sum(axis=0)
+            d_biases = deltas[i].sum(axis=0)  # Normal update term
+            self.second_moment_b[i] = self.beta2 * self.second_moment_b[i] + (1 - self.beta2) * np.square(d_biases)
+            vt_b = self.second_moment_b[i]
+            if correct_bias:
+                vt_b /= (1 - self.beta2 ** t)  # Bias correct
+            l2_term_biases = self.lam * self.biases[i]  # L2 Regularization term
+            self.biases[i] -= (eta / n_data) * (l2_term_biases + d_biases) / (np.sqrt(vt_b) + self.epsilon)
+
+            # dC/dw(l) [n(l) x n(l-1)] = del(l).T [n(l) x n] @ a(l-1) [n x n(l-1)]
+            d_weights = deltas[i].T @ self.activations[i]  # Normal update term
+            self.momentum_w[i] = self.beta2 * self.momentum_w[i] + (1 - self.beta2) * np.square(d_weights)
+            vt_w = self.momentum_w[i]
+            if correct_bias:
+                vt_w /= (1 - self.beta2 ** t)  # Bias correct
+            l2_term_weights = self.lam * self.weights[i]  # L2 regularization term
+            self.weights[i] -= (eta / n_data) * (l2_term_weights + d_weights) / (np.sqrt(vt_w) + self.epsilon)
+
+    def _adam(self, deltas, eta, n_data, t=999):
+        """
+        Uses Adaptive Moment estimation (ADAM) to updeight parameters.
+
+        Arguments:
+            deltas (list): The delta values returned from _backprop.
+            eta (float): Learning rate of the optimizer.
+            n_data (int): Amount of datapoints used in minibatch
+            t (int): Timestep the update happens in. This is used for bias-correction.
+        """
+        for i in range(self.n_layers - 1):
+            # dC/db(l) [n(l)] = del(l) [n x n(l)].sum(axis=0)
+            d_biases = deltas[i].sum(axis=0)  # Normal update term
+            self.momentum_b[i] = self.beta1 * self.momentum_b[i] + (1 - self.beta1) * d_biases  # First moment
+            mt_b = self.momentum_b[i] / (1 - self.beta1 ** t)  # First moment With bias correction
+            self.second_moment_b[i] = self.beta2 * self.second_moment_b[i] + (1 - self.beta1) * np.square(d_biases)
+            vt_b = self.second_moment_b[i] / (1 - self.beta2 ** t)  # Second moment With bias correction
+            l2_term_biases = self.lam * self.biases[i]  # L2 Regularization term
+            self.biases[i] -= (eta / n_data) * (l2_term_biases + mt_b) / (np.sqrt(vt_b) + self.epsilon)
+
+            # dC/dw(l) [n(l) x n(l-1)] = del(l).T [n(l) x n] @ a(l-1) [n x n(l-1)]
+            d_weights = deltas[i].T @ self.activations[i]  # Normal update term
+            self.momentum_w[i] = self.beta1 * self.momentum_w[i] + (1 - self.beta1) * d_weights  # First moment
+            mt_w = self.momentum_w[i] / (1 - self.beta1 ** t)  # First moment With bias correction
+            self.second_moment_w[i] = self.beta2 * self.second_moment_w[i] + (1 - self.beta1) * np.square(d_weights)
+            vt_w = self.second_moment_w[i] / (1 - self.beta2 ** t)  # Second moment With bias correction
+            l2_term_weights = self.lam * self.weights[i]  # L2 Regularization term
+            self.weights[i] -= (eta / n_data) * (l2_term_weights + mt_w) / (np.sqrt(vt_w) + self.epsilon)
 
     def _perform_evaluation(self, n_epoch, verbose):
         """
@@ -571,90 +714,4 @@ class NeuralNetwork:
 
 
 if __name__ == "__main__":
-    # Code for running the files. This will of course be put into a more nicer looking notebook after a while.
-    from IPython import embed
-    from data import data_loaders
-    from data import data_visualizer
-    from sklearn.datasets import load_diabetes
-    from sklearn.datasets import make_multilabel_classification
-    from sklearn.model_selection import train_test_split
-    np.random.seed(57)
-
-    train_data, val_data, test_data = data_loaders.load_mnist(path="data/", transform=True, normalize=False)
-    x_train, y_train = train_data
-    x_val, y_val = val_data
-    x_test, y_test = test_data
-
-    # Weight initialization
-    weight_initializations = ["standard_normal", "plain", "glorot_uniform", "glorot_normal",
-                              "kaiming_he_uniform", "kaiming_he_normal"]
-    for weight_in in weight_initializations:
-        print(f"\n {weight_in} \n")
-        np.random.seed(57)
-        nn = NeuralNetwork([784, 40, 10], model_type="multiclass", weight_initialization=weight_in)
-        nn.train(x_train, y_train, eta=2, epochs=5, eval_set=(x_val, y_val), verbose=True, minibatch_size=128)
-
-    # Multiclass MNIST
-    nn = NeuralNetwork([784, 40, 30, 20, 10], model_type="multiclass", weight_initialization="xavier")
-    x_train, y_train = x_train[:10000], y_train[:10000]
-    nn = NeuralNetwork([784, 40, 10], model_type="multiclass", dropouts=[0.8, 0.9])
-    nn.train(x_train, y_train, eta=1, epochs=30, eval_set=(x_val, y_val), verbose=True, minibatch_size=128, lam=0)
-    preds = nn.predict(x_val)
-    nn.plot_stats()
-    data_visualizer.plot_mnist_random(x_val, preds=preds, labels=y_val, n_random=20)
-    data_visualizer.plot_mnist_mislabeled(x_val, preds=preds, labels=y_val, n_random=20)
-
-    # Dropout
-    np.random.seed(57)
-    small_size = 3000
-    x_train_small, y_train_small = x_train[:small_size], y_train[:small_size]
-    nn = NeuralNetwork([784, 40, 40, 10], model_type="multiclass")
-    # This should overfit:
-    nn.train(x_train_small, y_train_small, eta=3, epochs=50, eval_set=(x_val, y_val), verbose=True, minibatch_size=128)
-    preds = nn.predict(x_val)
-    nn.plot_stats()
-    nn = NeuralNetwork([784, 40, 40, 10], model_type="multiclass", dropouts=[0.8, 0.75, 0.8])
-    # This should not overfit (but varies much and is not so robust):
-    nn.train(x_train_small, y_train_small, eta=3, epochs=50, eval_set=(x_val, y_val), verbose=True, minibatch_size=128)
-    preds = nn.predict(x_val)
-    nn.plot_stats()
-
-    # Binary classification
-    train_indices = y_train == 2
-    val_indices = y_val == 2
-    y_train_b = np.array(train_indices, dtype=int)
-    y_val_b = np.array(val_indices, dtype=int)
-    nn = NeuralNetwork([784, 20, 1], model_type="binary")
-    nn.train(x_train, y_train_b, eta=3, epochs=10, eval_set=(x_val, y_val_b), verbose=True, minibatch_size=128)
-    preds = nn.predict(x_val)
-    nn.plot_stats()
-    data_visualizer.plot_mnist_random(x_val, preds=preds[:, 0], labels=y_val_b, n_random=20)
-    data_visualizer.plot_mnist_mislabeled(x_val, preds=preds[:, 0], labels=y_val_b, n_random=20)
-
-    # Multilabel
-    x_data, y_data = make_multilabel_classification(1000, 20)
-    x_train_l, x_val_l, y_train_l, y_val_l = train_test_split(x_data, y_data, test_size=0.25)
-    nn = NeuralNetwork([20, 8, 5], model_type="multilabel")
-    nn.train(x_train_l, y_train_l, eta=0.05, epochs=1000, eval_set=(x_val_l, y_val_l), verbose=False, minibatch_size=128)
-    nn.plot_stats()
-
-    # Fashion MNIST
-    train_data, val_data, test_data = data_loaders.load_fashion_mnist(path="data/", transform=True, normalize=False)
-    x_train, y_train = train_data
-    x_val, y_val = val_data
-    x_test, y_test = test_data
-    # nn = NeuralNetwork([784, 16, 16, 10], model_type="multilabel")
-    nn = NeuralNetwork([784, 30, 10], model_type="multiclass", weight_initialization="glorot_normal")
-    nn.train(x_train, y_train, eta=1, epochs=20, eval_set=(x_test, y_test), verbose=True, minibatch_size=128, lam=0.01)
-    preds = nn.predict(x_test)
-    nn.plot_stats()
-    data_visualizer.plot_mnist_random(x_test, preds=preds, labels=y_test, n_random=20)
-    data_visualizer.plot_mnist_mislabeled(x_test, preds=preds, labels=y_test, n_random=20)
-
-    # Regression
-    np.random.seed(57)
-    diabetes = load_diabetes()
-    x_train_d, x_val_d, y_train_d, y_val_d = train_test_split(diabetes["data"][:, 0:9], diabetes["target"], test_size=0.25)
-    nn = NeuralNetwork([9, 5, 1], model_type="regression", weight_initialization="glorot_normal")
-    nn.train(x_train_d, y_train_d, eval_set=(x_val_d, y_val_d), verbose=True, eta=0.005, minibatch_size=20, epochs=100)
-    nn.plot_stats()  # SGD manage to escape local optimum, not possible with minibatch_size = 331 (input size)
+    pass

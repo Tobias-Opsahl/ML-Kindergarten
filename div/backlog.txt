@@ -1,16 +1,16 @@
 # TODO:
 Small things:
-    Add dropout.
-    Add optimiser (momentum, RMSprop, adam)
-    Worst classifications in visualize mnist (with logits)
+    Rearange the folders
+    Make pip installable
+    Make text labels for fashion-mnist and cifar in visualization.
     Make own train_test_split function
     Fix importing from parent folder (data_loaders and data_visualizer)
+
+Masters:
+    Work with datasets
 
 Large implementations:
     Evolutionary Algorithms
     Unsupervised learning stuff
     Layerwise Neural Networks
     CNN layers
-
-Maybe:
-    Netwons method for Multinomial logistic regression
